@@ -22,11 +22,23 @@ export async function initDatabase(): Promise<void> {
   }
 }
 
+export async function findTagByContent(content: string): Promise<Tag | null> {
+  const row = await db.getFirstAsync<Tag>(
+    'SELECT * FROM tags WHERE content = ?',
+    [content]
+  );
+  return row ?? null;
+}
+
 export async function insertTag(tag: Tag): Promise<void> {
   await db.runAsync(
     'INSERT OR IGNORE INTO tags (id, content, tag_type, scanned_at, quantity) VALUES (?, ?, ?, ?, ?)',
     [tag.id, tag.content, tag.tag_type, tag.scanned_at, tag.quantity]
   );
+}
+
+export async function incrementQuantity(id: string): Promise<void> {
+  await db.runAsync('UPDATE tags SET quantity = quantity + 1 WHERE id = ?', [id]);
 }
 
 export async function getAllTags(): Promise<Tag[]> {

@@ -7,16 +7,6 @@ interface Props {
   onDecrease: (id: string) => void;
 }
 
-function formatDate(iso: string): string {
-  const date = new Date(iso);
-  return date.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
 export default function TagListItem({ tag, onIncrease, onDecrease }: Props) {
   const truncated =
     tag.content.length > 200
@@ -25,26 +15,28 @@ export default function TagListItem({ tag, onIncrease, onDecrease }: Props) {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.date}>{formatDate(tag.scanned_at)}</Text>
+      <View style={styles.bodyRow}>
+        <Text style={styles.content} numberOfLines={2}>
+          {truncated}
+        </Text>
 
-      <Text style={styles.content}>{truncated}</Text>
+        <View style={styles.controls}>
+          <TouchableOpacity
+            style={styles.roundButton}
+            onPress={() => onDecrease(tag.id)}
+          >
+            <Text style={styles.buttonText}>−</Text>
+          </TouchableOpacity>
 
-      <View style={styles.quantityRow}>
-        <TouchableOpacity
-          style={styles.roundButton}
-          onPress={() => onDecrease(tag.id)}
-        >
-          <Text style={styles.buttonText}>−</Text>
-        </TouchableOpacity>
+          <Text style={styles.quantityText}>{tag.quantity}</Text>
 
-        <Text style={styles.quantityText}>{tag.quantity}</Text>
-
-        <TouchableOpacity
-          style={styles.roundButton}
-          onPress={() => onIncrease(tag.id)}
-        >
-          <Text style={styles.buttonText}>+</Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.roundButton}
+            onPress={() => onIncrease(tag.id)}
+          >
+            <Text style={styles.buttonText}>+</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
@@ -62,45 +54,42 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowRadius: 6,
     elevation: 2,
-    alignItems: 'center',
   },
-  date: {
-    fontSize: 12,
-    color: '#888',
-    alignSelf: 'flex-end',
-    marginBottom: 6,
+  bodyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   content: {
     fontSize: 20,
     lineHeight: 28,
     color: '#222',
-    textAlign: 'center',
-    marginBottom: 16,
+    flex: 1,
+    marginRight: 16,
   },
-  quantityRow: {
+  controls: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 24,
+    gap: 10,
   },
   roundButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#366092',
     justifyContent: 'center',
     alignItems: 'center',
   },
   buttonText: {
     color: '#fff',
-    fontSize: 26,
+    fontSize: 22,
     fontWeight: '600',
-    lineHeight: 28,
+    lineHeight: 24,
   },
   quantityText: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '700',
     color: '#222',
-    minWidth: 30,
+    minWidth: 24,
     textAlign: 'center',
   },
 });

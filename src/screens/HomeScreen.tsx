@@ -11,7 +11,7 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import NfcManager, { NfcTech } from 'react-native-nfc-manager';
 import * as Haptics from 'expo-haptics';
-import { deleteTag, getAllTags, insertTag, updateQuantity } from '../database/database';
+import { deleteTag, findTagByContent, getAllTags, incrementQuantity, insertTag, updateQuantity } from '../database/database';
 import { extractTextPayload } from '../utils/nfc';
 import type { Tag } from '../types';
 import TagListItem from '../components/TagListItem';
@@ -133,19 +133,22 @@ export default function HomeScreen() {
           return;
         }
 
-        const tagId =
-          tag.id ||
-          `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-
-        const newTag: Tag = {
-          id: tagId,
-          content: text,
-          tag_type: 'text/plain',
-          scanned_at: new Date().toISOString(),
-          quantity: 1,
-        };
-
-        await insertTag(newTag);
+        const existing = await findTagByContent(text);
+        if (existing) {
+          await incrementQuantity(existing.id);
+        } else {
+          const tagId =
+            tag.id ||
+            `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+          const newTag: Tag = {
+            id: tagId,
+            content: text,
+            tag_type: 'text/plain',
+            scanned_at: new Date().toISOString(),
+            quantity: 1,
+          };
+          await insertTag(newTag);
+        }
         await NfcManager.cancelTechnologyRequest();
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
