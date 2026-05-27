@@ -5,12 +5,14 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
+    "scheme": "tag",
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
         "NFCReaderUsageDescription": "This app needs NFC access to read information from NFC tags."
-      }
+      },
+      "bundleIdentifier": "com.NigmarLi.Tag"
     },
     "android": {
       "adaptiveIcon": {
@@ -23,14 +25,13 @@
       "permissions": [
         "android.permission.NFC"
       ],
-      "package": "com.anonymous.Tag"
+      "package": "com.NigmarLi.Tag"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "react-native-nfc-manager",
-      "expo-sqlite",
       [
         "expo-build-properties",
         {
@@ -43,6 +44,7 @@
           }
         }
       ]
-    ]
+    ],
+    "extra": {}
   }
 }

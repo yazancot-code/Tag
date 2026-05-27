@@ -16,3 +16,8 @@ export function extractTextPayload(
   }
   return null;
 }
+
+/** Extract NFC tag UID or a stable identifier. */
+export function extractTagId(tag: any): string {
+  return tag.id || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}

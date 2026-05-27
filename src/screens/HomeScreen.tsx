@@ -1,314 +1,175 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Platform,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Alert, FlatList, StyleSheet, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import NfcManager, { NfcTech } from 'react-native-nfc-manager';
 import * as Haptics from 'expo-haptics';
-import { deleteTag, findTagByContent, getAllTags, incrementQuantity, insertTag, updateQuantity } from '../database/database';
-import { extractTextPayload } from '../utils/nfc';
-import type { Tag } from '../types';
-import TagListItem from '../components/TagListItem';
-
-type ScanState = 'scanning' | 'tag_found' | 'timeout' | 'error' | 'unsupported';
+import { useAuth } from '../auth/useAuth';
+import { useHousehold } from '../hooks/useHousehold';
+import { useShoppingList } from '../hooks/useShoppingList';
+import { useNfcScanner } from '../hooks/useNfcScanner';
+import { extractTextPayload, extractTagId } from '../services/nfc';
+import { lookupArticleByNfcUid, createArticle } from '../services/articles';
+import { getArticlePrices } from '../services/prices';
+import { useTheme } from '../lib/theme';
+import ArticleListItem from '../components/ArticleListItem';
+import ScanOverlay from '../components/ScanOverlay';
+import EmptyList from '../components/EmptyList';
+import ArticleNamingModal from '../components/ArticleNamingModal';
+import type { GovPrice } from '../types';
 
 export default function HomeScreen() {
-  const [tags, setTags] = useState<Tag[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+  const { user } = useAuth();
+  const { household, loadHousehold } = useHousehold();
+  const { items, loading: listLoading, fetchItems, addItem, updateQuantity, toggleChecked, removeItem } = useShoppingList(household?.id ?? null);
+  const [prices, setPrices] = useState<Record<string, GovPrice | null>>({});
+  const theme = useTheme();
 
-  const [scanState, setScanState] = useState<ScanState>('scanning');
-  const [countdown, setCountdown] = useState(10);
-  const [scanError, setScanError] = useState<string | null>(null);
+  // Unknown tag naming modal state
+  const [namingVisible, setNamingVisible] = useState(false);
+  const [namingDefault, setNamingDefault] = useState('');
+  const namingResolveRef = useRef<((name: string) => void) | null>(null);
 
-  const isMounted = useRef(true);
-  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const waitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isScanningRef = useRef(false);
-
-  const loadTags = useCallback(async (isRefresh = false) => {
-    try {
-      if (!isRefresh) setLoading(true);
-      setError(null);
-      const result = await getAllTags();
-      setTags(result);
-    } catch {
-      setError('Failed to load tags');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+  const loadPrices = useCallback(async () => {
+    const priceMap: Record<string, GovPrice | null> = {};
+    for (const item of items) {
+      const article = item.article;
+      if (article?.barcode && !priceMap[article.id]) {
+        const articlePrices = await getArticlePrices(article.barcode);
+        priceMap[article.id] = articlePrices.length > 0 ? articlePrices[0] : null;
+      }
     }
+    setPrices(priceMap);
+  }, [items]);
+
+  useEffect(() => {
+    if (items.length > 0) loadPrices();
+  }, [items.length, loadPrices]);
+
+  const handleNamingSave = useCallback((name: string) => {
+    namingResolveRef.current?.(name);
+    namingResolveRef.current = null;
+    setNamingVisible(false);
   }, []);
 
-  // Keep a ref to loadTags so the scan loop always calls the latest version
-  const loadTagsRef = useRef(loadTags);
-  loadTagsRef.current = loadTags;
+  const handleNamingSkip = useCallback(() => {
+    namingResolveRef.current?.(namingDefault);
+    namingResolveRef.current = null;
+    setNamingVisible(false);
+  }, [namingDefault]);
+
+  const onTagDetected = useCallback(async (tag: any) => {
+    const text = extractTextPayload(tag.ndefMessage) || extractTagId(tag);
+    const nfcUid = extractTagId(tag);
+
+    const article = await lookupArticleByNfcUid(nfcUid);
+
+    let resolvedName: string | null = null;
+
+    if (!article) {
+      resolvedName = await new Promise<string>((resolve) => {
+        namingResolveRef.current = resolve;
+        setNamingDefault(text);
+        setNamingVisible(true);
+      });
+    }
+
+    if (resolvedName !== null) {
+      const newArticle = await createArticle({
+        nfc_uid: nfcUid,
+        name_he: resolvedName,
+        name_en: null,
+      });
+      if (user && household) {
+        await addItem(newArticle.id, user.id);
+      }
+    } else if (article && user && household) {
+      await addItem(article.id, user.id);
+    }
+
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    await fetchItems();
+  }, [user, household, addItem, fetchItems]);
+
+  const { scanState, countdown, scanError, startScanning } = useNfcScanner({ onTagDetected });
 
   useFocusEffect(
     useCallback(() => {
-      loadTags();
-    }, [loadTags])
+      if (household) fetchItems();
+    }, [household, fetchItems])
   );
 
-  // Start scanning on mount
+  useEffect(() => {
+    if (user) {
+      loadHousehold(user.id);
+    }
+  }, [user, loadHousehold]);
+
   useEffect(() => {
     startScanning();
+  }, [startScanning]);
 
-    return () => {
-      isMounted.current = false;
-      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-      if (waitTimeoutRef.current) clearTimeout(waitTimeoutRef.current);
-      NfcManager.cancelTechnologyRequest().catch(() => {});
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const handleIncrease = useCallback(async (itemId: string) => {
+    const item = items.find((i) => i.id === itemId);
+    if (!item) return;
+    await updateQuantity(itemId, item.quantity + 1);
+  }, [items, updateQuantity]);
 
-  const startScanning = useCallback(async () => {
-    if (isScanningRef.current) return;
-    isScanningRef.current = true;
-
-    const supported = await NfcManager.isSupported();
-    if (!supported) {
-      if (isMounted.current) setScanState('unsupported');
-      isScanningRef.current = false;
-      return;
-    }
-
-    while (isMounted.current) {
-      setScanState('scanning');
-      setCountdown(10);
-      setScanError(null);
-
-      countdownIntervalRef.current = setInterval(() => {
-        setCountdown((prev) => Math.max(0, prev - 1));
-      }, 1000);
-
-      try {
-        NfcManager.setTimeout(10000);
-        await NfcManager.requestTechnology(NfcTech.Ndef, {
-          alertMessage:
-            Platform.OS === 'ios'
-              ? 'Hold your iPhone near the NFC tag.'
-              : undefined,
-        });
-
-        // Tag found
-        if (countdownIntervalRef.current) {
-          clearInterval(countdownIntervalRef.current);
-          countdownIntervalRef.current = null;
-        }
-
-        if (!isMounted.current) {
-          await NfcManager.cancelTechnologyRequest().catch(() => {});
-          isScanningRef.current = false;
-          return;
-        }
-
-        const tag = await NfcManager.getTag();
-        if (!tag) {
-          await NfcManager.cancelTechnologyRequest();
-          if (isMounted.current) {
-            setScanState('error');
-            setScanError('No tag detected. Try again.');
-            isScanningRef.current = false;
-          }
-          return;
-        }
-
-        const text = extractTextPayload(tag.ndefMessage);
-        if (!text) {
-          await NfcManager.cancelTechnologyRequest();
-          if (isMounted.current) {
-            setScanState('error');
-            setScanError('No text content found on this tag.');
-            isScanningRef.current = false;
-          }
-          return;
-        }
-
-        const existing = await findTagByContent(text);
-        if (existing) {
-          await incrementQuantity(existing.id);
-        } else {
-          const tagId =
-            tag.id ||
-            `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-          const newTag: Tag = {
-            id: tagId,
-            content: text,
-            tag_type: 'text/plain',
-            scanned_at: new Date().toISOString(),
-            quantity: 1,
-          };
-          await insertTag(newTag);
-        }
-        await NfcManager.cancelTechnologyRequest();
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-        if (!isMounted.current) {
-          isScanningRef.current = false;
-          return;
-        }
-
-        // Reload the tag list
-        try {
-          await loadTagsRef.current();
-        } catch {
-          // Don't break the scan cycle if list reload fails
-        }
-
-        setScanState('tag_found');
-
-        // Wait 2 seconds before restarting the scan
-        await new Promise<void>((resolve) => {
-          waitTimeoutRef.current = setTimeout(resolve, 2000);
-        });
-
-        // Loop continues — auto-restart scanning
-      } catch (e: any) {
-        if (countdownIntervalRef.current) {
-          clearInterval(countdownIntervalRef.current);
-          countdownIntervalRef.current = null;
-        }
-        await NfcManager.cancelTechnologyRequest().catch(() => {});
-
-        if (!isMounted.current) {
-          isScanningRef.current = false;
-          return;
-        }
-
-        const msg = e?.message || '';
-        if (
-          msg.toLowerCase().includes('cancel') ||
-          msg.toLowerCase().includes('timeout')
-        ) {
-          setScanState('timeout');
-        } else {
-          setScanState('error');
-          setScanError(msg || 'An unexpected error occurred.');
-        }
-
-        isScanningRef.current = false;
-        return; // Break the loop — user must tap Rescan / Try Again
-      }
-    }
-
-    isScanningRef.current = false;
-  }, []);
-
-  const handleRefresh = () => {
-    setRefreshing(true);
-    loadTags(true);
-  };
-
-  const handleIncrease = useCallback(async (id: string) => {
-    const tag = tags.find((t) => t.id === id);
-    if (!tag) return;
-    const newQty = tag.quantity + 1;
-    await updateQuantity(id, newQty);
-    setTags((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, quantity: newQty } : t))
-    );
-  }, [tags]);
-
-  const handleDecrease = useCallback(async (id: string) => {
-    const tag = tags.find((t) => t.id === id);
-    if (!tag) return;
-    if (tag.quantity <= 1) {
-      await deleteTag(id);
-      setTags((prev) => prev.filter((t) => t.id !== id));
+  const handleDecrease = useCallback(async (itemId: string) => {
+    const item = items.find((i) => i.id === itemId);
+    if (!item) return;
+    if (item.quantity <= 1) {
+      await removeItem(itemId);
     } else {
-      const newQty = tag.quantity - 1;
-      await updateQuantity(id, newQty);
-      setTags((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, quantity: newQty } : t))
-      );
+      await updateQuantity(itemId, item.quantity - 1);
     }
-  }, [tags]);
+  }, [items, updateQuantity, removeItem]);
 
-  if (loading) {
-    return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#366092" />
-        <Text style={styles.loadingText}>Loading tags…</Text>
-      </View>
-    );
-  }
+  const handleToggleCheck = useCallback(async (itemId: string, checked: boolean) => {
+    await toggleChecked(itemId, checked);
+  }, [toggleChecked]);
 
-  if (error) {
-    return (
-      <View style={styles.centerContainer}>
-        <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={() => loadTags()}>
-          <Text style={styles.retryButtonText}>Retry</Text>
-        </TouchableOpacity>
-      </View>
+  const handleLongPress = useCallback((itemId: string, name: string) => {
+    Alert.alert(
+      'Remove Item',
+      `Remove "${name}" from the list?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Remove', style: 'destructive', onPress: () => removeItem(itemId) },
+      ]
     );
-  }
+  }, [removeItem]);
 
   return (
-    <View style={styles.container}>
-      {tags.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyTitle}>No tags yet</Text>
-          <Text style={styles.emptySubtitle}>
-            Hold your phone near an NFC tag to start scanning.
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          data={tags}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-  <TagListItem
-    tag={item}
-    onIncrease={handleIncrease}
-    onDecrease={handleDecrease}
-  />
-)}
-          contentContainerStyle={styles.list}
-          refreshing={refreshing}
-          onRefresh={handleRefresh}
-        />
-      )}
+    <View style={[styles.container, { backgroundColor: theme.background }]}>
+      <FlatList
+        data={items}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <ArticleListItem
+            item={item}
+            price={item.article?.barcode ? prices[item.article.id] ?? undefined : undefined}
+            onIncrease={handleIncrease}
+            onDecrease={handleDecrease}
+            onToggleCheck={handleToggleCheck}
+            onLongPress={handleLongPress}
+          />
+        )}
+        contentContainerStyle={styles.list}
+        ListEmptyComponent={listLoading ? null : <EmptyList />}
+      />
 
-      {/* Scan status footer */}
-      <View style={styles.footer}>
-        {scanState === 'scanning' && (
-          <View style={styles.footerRow}>
-            <ActivityIndicator size="small" color="#366092" />
-            <Text style={styles.countdownText}>Scanning… {countdown}s</Text>
-          </View>
-        )}
-        {scanState === 'tag_found' && (
-          <Text style={styles.successText}>Tag saved! Scanning again shortly…</Text>
-        )}
-        {scanState === 'timeout' && (
-          <TouchableOpacity style={styles.footerButton} onPress={startScanning}>
-            <Text style={styles.footerButtonText}>Rescan</Text>
-          </TouchableOpacity>
-        )}
-        {scanState === 'error' && (
-          <View style={styles.errorFooter}>
-            <Text style={styles.errorMessage}>{scanError}</Text>
-            <TouchableOpacity style={styles.footerButton} onPress={startScanning}>
-              <Text style={styles.footerButtonText}>Try Again</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-        {scanState === 'unsupported' && (
-          <Text style={styles.unsupportedText}>
-            NFC is not available on this device.
-          </Text>
-        )}
-      </View>
+      <ScanOverlay
+        scanState={scanState}
+        countdown={countdown}
+        scanError={scanError}
+        onRescan={startScanning}
+      />
+
+      <ArticleNamingModal
+        visible={namingVisible}
+        defaultName={namingDefault}
+        onSave={handleNamingSave}
+        onSkip={handleNamingSkip}
+      />
     </View>
   );
 }
@@ -316,105 +177,9 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f2f2f7',
-  },
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 32,
-    backgroundColor: '#f2f2f7',
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 15,
-    color: '#888',
-  },
-  errorText: {
-    fontSize: 16,
-    color: '#d32f2f',
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  retryButton: {
-    backgroundColor: '#366092',
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  retryButtonText: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 32,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#333',
-    marginBottom: 8,
-  },
-  emptySubtitle: {
-    fontSize: 15,
-    color: '#888',
-    textAlign: 'center',
-    lineHeight: 22,
   },
   list: {
     paddingVertical: 12,
     paddingBottom: 24,
-  },
-  footer: {
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
-    backgroundColor: '#fff',
-  },
-  footerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  countdownText: {
-    fontSize: 15,
-    color: '#366092',
-    fontWeight: '600',
-  },
-  successText: {
-    fontSize: 15,
-    color: '#2e7d32',
-    fontWeight: '600',
-  },
-  errorFooter: {
-    alignItems: 'center',
-    gap: 8,
-  },
-  errorMessage: {
-    fontSize: 14,
-    color: '#d32f2f',
-    textAlign: 'center',
-  },
-  footerButton: {
-    backgroundColor: '#366092',
-    paddingHorizontal: 32,
-    paddingVertical: 12,
-    borderRadius: 10,
-  },
-  footerButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  unsupportedText: {
-    fontSize: 15,
-    color: '#888',
-    textAlign: 'center',
   },
 });
