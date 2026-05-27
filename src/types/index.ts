@@ -3,6 +3,7 @@ export interface Tag {
   content: string;
   tag_type: string;
   scanned_at: string;
+  quantity: number;
 }
 
 export type RootStackParamList = {

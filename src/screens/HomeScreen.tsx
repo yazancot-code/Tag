@@ -11,7 +11,7 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import NfcManager, { NfcTech } from 'react-native-nfc-manager';
 import * as Haptics from 'expo-haptics';
-import { getAllTags, insertTag } from '../database/database';
+import { deleteTag, getAllTags, insertTag, updateQuantity } from '../database/database';
 import { extractTextPayload } from '../utils/nfc';
 import type { Tag } from '../types';
 import TagListItem from '../components/TagListItem';
@@ -142,6 +142,7 @@ export default function HomeScreen() {
           content: text,
           tag_type: 'text/plain',
           scanned_at: new Date().toISOString(),
+          quantity: 1,
         };
 
         await insertTag(newTag);
@@ -204,6 +205,31 @@ export default function HomeScreen() {
     loadTags(true);
   };
 
+  const handleIncrease = useCallback(async (id: string) => {
+    const tag = tags.find((t) => t.id === id);
+    if (!tag) return;
+    const newQty = tag.quantity + 1;
+    await updateQuantity(id, newQty);
+    setTags((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, quantity: newQty } : t))
+    );
+  }, [tags]);
+
+  const handleDecrease = useCallback(async (id: string) => {
+    const tag = tags.find((t) => t.id === id);
+    if (!tag) return;
+    if (tag.quantity <= 1) {
+      await deleteTag(id);
+      setTags((prev) => prev.filter((t) => t.id !== id));
+    } else {
+      const newQty = tag.quantity - 1;
+      await updateQuantity(id, newQty);
+      setTags((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, quantity: newQty } : t))
+      );
+    }
+  }, [tags]);
+
   if (loading) {
     return (
       <View style={styles.centerContainer}>
@@ -237,7 +263,13 @@ export default function HomeScreen() {
         <FlatList
           data={tags}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <TagListItem tag={item} />}
+          renderItem={({ item }) => (
+  <TagListItem
+    tag={item}
+    onIncrease={handleIncrease}
+    onDecrease={handleDecrease}
+  />
+)}
           contentContainerStyle={styles.list}
           refreshing={refreshing}
           onRefresh={handleRefresh}
