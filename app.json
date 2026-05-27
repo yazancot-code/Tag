@@ -7,7 +7,10 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NFCReaderUsageDescription": "This app needs NFC access to read information from NFC tags."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -16,10 +19,30 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.NFC"
+      ],
+      "package": "com.anonymous.Tag"
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "react-native-nfc-manager",
+      "expo-sqlite",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "entitlements": {
+              "com.apple.developer.nfc.readersession.formats": [
+                "NDEF"
+              ]
+            }
+          }
+        }
+      ]
+    ]
   }
 }
